@@ -1,0 +1,25 @@
+# Byte-code files
+*.pyc
+__pycache__/
+
+# Distribution / packaging
+.Python
+build/
+dist/
+*.egg-info/
+
+# Editors
+.idea/
+.vscode/
+
+# Virtual environment
+virtualenv/
+venv/
+
+# Tests
+.coverage
+.pytest_cache/
+
+# OS generated files
+.DS_Store
+thumbs.db
