@@ -15,6 +15,7 @@
 *   **Metadata Extraction**: Automatically extracts front matter (e.g., title, author) from Markdown files.
 *   **Directory Traversal**: Processes Markdown files across nested directories.
 *   **Clean Output**: Ensures a fresh build by clearing the output directory before generation.
+*   **JSON Configuration File**: Drive a build from a `config.json` (input/output/template directories and the default template) via `--config` or an auto-detected `config.json`.
 *   **Extensible Design**: Built with an OOP approach, making it easy to extend or swap components.
 
 ### Project Structure
@@ -121,6 +122,45 @@ mkgen-core/
     generator.generate()
     print(f"Site generated successfully in {output_directory}/")
     ```
+
+### Configuration File
+
+Instead of hard-coding directories in a build script, you can describe a build
+in a JSON configuration file and let `mkgen-core` load it. Create a
+`config.json`:
+
+```json
+{
+    "input_dir": "content",
+    "output_dir": "public",
+    "template_dir": "templates",
+    "default_template": "page.html"
+}
+```
+
+*   `input_dir`, `output_dir`, `template_dir` are required.
+*   `default_template` is optional and defaults to `page.html`.
+*   Unknown keys and non-string values are rejected so typos surface immediately.
+
+Run the generator from the configuration:
+
+```bash
+python main.py --config config.json
+# or, if a config.json exists in the current directory:
+python main.py
+```
+
+Programmatically:
+
+```python
+from main import SiteGenerator
+
+generator = SiteGenerator.from_config('config.json')
+generator.generate()
+```
+
+If no configuration is given and no `config.json` is present, `main.py` runs a
+built-in demo (the previous default behaviour).
 
 ### Running Tests
 

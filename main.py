@@ -1,3 +1,5 @@
+import argparse
+import json
 import os
 import re
 import shutil
@@ -5,6 +7,103 @@ from typing import Dict, Any, Optional
 
 import markdown
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+# Default name of the JSON configuration file looked up in the current working
+# directory when no explicit ``--config`` path is provided.
+# Standardname der JSON-Konfigurationsdatei, die im aktuellen Arbeitsverzeichnis
+# gesucht wird, wenn kein expliziter ``--config``-Pfad angegeben wurde.
+DEFAULT_CONFIG_FILENAME = "config.json"
+
+# Keys understood in the configuration file and the SiteGenerator argument they
+# map to. Only these keys are forwarded to SiteGenerator; unknown keys raise an
+# error so typos are caught early.
+# Schlüssel, die in der Konfigurationsdatei verstanden werden, und das
+# SiteGenerator-Argument, auf das sie abgebildet werden.
+_CONFIG_KEYS = {
+    "input_dir": "input_dir",
+    "output_dir": "output_dir",
+    "template_dir": "template_dir",
+    "default_template": "default_template",
+}
+
+
+def load_config(config_path: str) -> Dict[str, Any]:
+    """
+    Lädt eine JSON-Konfigurationsdatei und validiert ihren Inhalt.
+    Loads a JSON configuration file and validates its content.
+
+    Die Konfiguration darf folgende Schlüssel enthalten:
+    The configuration may contain the following keys:
+
+        - ``input_dir`` (str, required): Verzeichnis mit den Markdown-Quellen.
+        - ``output_dir`` (str, required): Zielverzeichnis für das generierte HTML.
+        - ``template_dir`` (str, required): Verzeichnis mit den Jinja2-Vorlagen.
+        - ``default_template`` (str, optional): Name der Standardvorlage.
+
+    Args:
+        config_path (str): Pfad zur JSON-Konfigurationsdatei.
+
+    Returns:
+        Dict[str, Any]: Ein Dictionary, dessen Schlüssel exakt den
+        Konstruktor-Argumenten von :class:`SiteGenerator` entsprechen.
+
+    Raises:
+        FileNotFoundError: Wenn die Konfigurationsdatei nicht existiert.
+        ValueError: Wenn die Datei kein gültiges JSON-Objekt ist,
+            Pflichtfelder fehlen oder unbekannte Schlüssel enthalten sind.
+    """
+    if not os.path.isfile(config_path):
+        raise FileNotFoundError(
+            f"Konfigurationsdatei '{config_path}' wurde nicht gefunden."
+        )
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        try:
+            raw = json.load(f)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Konfigurationsdatei '{config_path}' enthält kein gültiges JSON: {exc}"
+            ) from exc
+
+    if not isinstance(raw, dict):
+        raise ValueError(
+            "Die Konfiguration muss ein JSON-Objekt (Dictionary) auf oberster Ebene sein."
+        )
+
+    # Unbekannte Schlüssel früh melden, damit Tippfehler nicht stillschweigend
+    # ignoriert werden.
+    # Report unknown keys early so typos are not silently ignored.
+    unknown = set(raw) - set(_CONFIG_KEYS)
+    if unknown:
+        raise ValueError(
+            "Unbekannte Konfigurationsschlüssel: "
+            + ", ".join(sorted(unknown))
+            + ". Erlaubt sind: "
+            + ", ".join(sorted(_CONFIG_KEYS))
+            + "."
+        )
+
+    # Pflichtfelder prüfen.
+    # Check required fields.
+    required = ["input_dir", "output_dir", "template_dir"]
+    missing = [key for key in required if key not in raw]
+    if missing:
+        raise ValueError(
+            "Fehlende Pflichtfelder in der Konfiguration: " + ", ".join(missing) + "."
+        )
+
+    # Typprüfung: alle unterstützten Werte sind Strings.
+    # Type check: all supported values are strings.
+    resolved: Dict[str, Any] = {}
+    for key, value in raw.items():
+        if not isinstance(value, str):
+            raise ValueError(
+                f"Konfigurationswert für '{key}' muss eine Zeichenkette sein, "
+                f"nicht {type(value).__name__}."
+            )
+        resolved[_CONFIG_KEYS[key]] = value
+
+    return resolved
 
 class MarkdownProcessor:
     """
@@ -130,6 +229,25 @@ class SiteGenerator:
         self.markdown_processor = MarkdownProcessor()
         self.template_engine = TemplateEngine(template_dir)
 
+    @classmethod
+    def from_config(cls, config_path: str) -> "SiteGenerator":
+        """
+        Erstellt einen SiteGenerator aus einer JSON-Konfigurationsdatei.
+        Creates a SiteGenerator from a JSON configuration file.
+
+        Die Konfigurationsdatei definiert Eingabe-/Ausgabeverzeichnisse,
+        den Vorlagenpfad und optional die Standardvorlage. Siehe
+        :func:`load_config` für das erwartete Schema.
+
+        Args:
+            config_path (str): Pfad zur JSON-Konfigurationsdatei.
+
+        Returns:
+            SiteGenerator: Eine gemäß der Konfiguration initialisierte Instanz.
+        """
+        config = load_config(config_path)
+        return cls(**config)
+
     def _ensure_output_dir(self) -> None:
         """
         Stellt sicher, dass das Ausgabeverzeichnis existiert, und erstellt es, falls nicht.
@@ -229,7 +347,7 @@ class SiteGenerator:
         print("Generierung abgeschlossen.")
 
 
-if __name__ == "__main__":
+def _run_demo() -> None:
     # Beispiel für die Verwendung des SiteGenerators.
     # Example usage of the SiteGenerator.
 
@@ -257,9 +375,7 @@ if __name__ == "__main__":
         f.write("---\n")
         f.write("\n# Herzlich Willkommen!")
         f.write("\n\nDies ist die Startseite, generiert mit **MkGen-Core**.")
-        f.write("\n\n*   Schnell
-*   Einfach
-*   Erweiterbar")
+        f.write("\n\n*   Schnell\n*   Einfach\n*   Erweiterbar")
 
     # Erstellt eine weitere Beispiel-Markdown-Datei in einem Unterverzeichnis.
     # Creates another example Markdown file in a subdirectory.
@@ -326,3 +442,73 @@ if __name__ == "__main__":
         # shutil.rmtree(temp_output_dir)
         # shutil.rmtree(temp_template_dir)
         pass
+
+
+def main(argv: Optional[list] = None) -> int:
+    """
+    Kommandozeilen-Einstiegspunkt für MkGen-Core.
+    Command-line entry point for MkGen-Core.
+
+    Wird eine Konfigurationsdatei angegeben (via ``--config``) oder liegt eine
+    Datei namens ``config.json`` im aktuellen Verzeichnis, so wird die
+    Generierung anhand dieser Konfiguration ausgeführt. Andernfalls wird die
+    eingebaute Demo gestartet.
+
+    If a configuration file is given (via ``--config``) or a ``config.json``
+    exists in the current directory, generation runs from that configuration.
+    Otherwise the built-in demo is executed.
+
+    Args:
+        argv (Optional[list]): Argumentliste (für Tests). Standardmäßig
+            ``sys.argv[1:]``.
+
+    Returns:
+        int: Exit-Code (0 bei Erfolg, ungleich 0 bei Fehler).
+    """
+    parser = argparse.ArgumentParser(
+        description="MkGen-Core: statischer Website-Generator aus Markdown und Jinja2-Vorlagen."
+    )
+    parser.add_argument(
+        "-c",
+        "--config",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Pfad zu einer JSON-Konfigurationsdatei mit den Schlüsseln "
+            "input_dir, output_dir, template_dir und optional default_template. "
+            f"Ohne Angabe wird '{DEFAULT_CONFIG_FILENAME}' im aktuellen "
+            "Verzeichnis verwendet, falls vorhanden."
+        ),
+    )
+    args = parser.parse_args(argv)
+
+    # Konfigurationspfad bestimmen: expliziter Pfad hat Vorrang, sonst
+    # Default-Datei im Arbeitsverzeichnis, falls vorhanden.
+    # Determine the configuration path: an explicit path wins, otherwise the
+    # default file in the working directory if it exists.
+    config_path = args.config
+    if config_path is None and os.path.isfile(DEFAULT_CONFIG_FILENAME):
+        config_path = DEFAULT_CONFIG_FILENAME
+
+    if config_path is None:
+        # Keine Konfiguration -> eingebaute Demo ausführen (bisheriges Verhalten).
+        # No configuration -> run the built-in demo (previous behaviour).
+        _run_demo()
+        return 0
+
+    try:
+        generator = SiteGenerator.from_config(config_path)
+        generator.generate()
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"Konfigurationsfehler: {exc}")
+        return 1
+
+    print(
+        f"\nStatische Website erfolgreich aus Konfiguration '{config_path}' "
+        f"nach '{generator.output_dir}' generiert."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
